@@ -1,47 +1,37 @@
-[BITS 16]
-[ORG 0x7C00]  ; BIOS загружает загрузчик по адресу 0x7C00
+[BITS 16]         ; Код работает в 16-битном режиме
+[ORG 0x7C00]      ; Начало загрузки BIOS
 
 start:
-    cli               ; Запрещаем прерывания
-    mov ax, 0x07C0   ; Устанавливаем сегмент данных
+    cli           ; Отключаем прерывания
+    mov ax, 0x07C0
     mov ds, ax
     mov es, ax
-    mov ss, ax
-    mov sp, 0xFFFF   ; Устанавливаем стек
-    sti               ; Включаем прерывания
 
-    mov si, msg       ; Выводим сообщение
-    call print
-
-    call load_kernel  ; Загружаем ядро
-    call switch_to_pm ; Переход в защищенный режим
-
-    jmp $            ; Бесконечный цикл (если что-то пошло не так)
-
-print:
-    lodsb
-    or al, al
-    jz done
-    mov ah, 0x0E
+    ; Установка видеорежима
+    mov ax, 0x13
     int 0x10
-    jmp print
 
-done:
-    ret
+    ; Читаем ядро с диска (сектор 2 и дальше)
+    mov ah, 0x02
+    mov al, 20
+    mov ch, 0
+    mov dh, 0
+    mov cl, 2
+    mov bx, 0x1000
+    int 0x13
 
-load_kernel:
-    ; Здесь будет код для загрузки ядра с FAT16
-    ret
-
-switch_to_pm:
+    ; Переход в защищённый режим
     cli
-    lgdt [gdt_descriptor]  ; Загружаем GDT
-    mov eax, cr0
-    or eax, 1
-    mov cr0, eax           ; Включаем защищенный режим
-    jmp CODE_SEG:init_pm   ; Дальний прыжок для активации
+    lgdt [gdt_descriptor]
 
-[BITS 32]
+    mov eax, cr0
+    or eax, 0x1
+    mov cr0, eax
+
+    jmp CODE_SEG:init_pm  ; Переход в 32-битный режим
+
+[BITS 32]         ; Переход в защищённый режим
+
 init_pm:
     mov ax, DATA_SEG
     mov ds, ax
@@ -49,24 +39,40 @@ init_pm:
     mov fs, ax
     mov gs, ax
     mov ss, ax
-    mov esp, 0x90000  ; Устанавливаем стек
-    call kernel_main  ; Переход к ядру
-    jmp $
+    mov esp, 0x90000      ; Устанавливаем стек
 
-; Описание GDT
-gdt:
-    dw 0x0000, 0x0000, 0x0000, 0x0000  ; NULL-сегмент
-    dw 0xFFFF, 0x0000, 0x9A00, 0x00CF  ; Кодовый сегмент
-    dw 0xFFFF, 0x0000, 0x9200, 0x00CF  ; Данные сегмент
+    call kernel_main      ; Вызываем ядро
+
+hang:
+    hlt
+    jmp hang
+
+gdt_start:
+gdt_null:
+    dd 0
+    dd 0
+gdt_code:
+    dw 0xFFFF
+    dw 0x0000
+    db 0x00
+    db 0x9A
+    db 0xCF
+    db 0x00
+gdt_data:
+    dw 0xFFFF
+    dw 0x0000
+    db 0x00
+    db 0x92
+    db 0xCF
+    db 0x00
+gdt_end:
 
 gdt_descriptor:
-    dw gdt_descriptor - gdt - 1
-    dd gdt
+    dw gdt_end - gdt_start - 1
+    dd gdt_start
 
-CODE_SEG equ 0x08
-DATA_SEG equ 0x10
+CODE_SEG equ gdt_code - gdt_start
+DATA_SEG equ gdt_data - gdt_start
 
-msg db "Booting minimal OS...", 0
-
-times 510-($-$$) db 0  ; Дополняем до 512 байт
-DW 0xAA55               ; Boot signature
+times 510-($-$$) db 0
+dw 0xAA55  ; Завершающий сигнатурный байт BIOS
